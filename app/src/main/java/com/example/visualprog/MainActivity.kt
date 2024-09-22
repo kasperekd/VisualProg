@@ -94,23 +94,21 @@ class MainActivity : AppCompatActivity() {
                             cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
                             cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
                             cellInfoStringBuilder.append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
+                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
                         }
                         is CellInfoLte -> {
                             cellInfoStringBuilder.append("Type: LTE\n")
                             cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.ci}\n")
                             cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
                             cellInfoStringBuilder.append("Tracking Area Code: ${cellInfo.cellIdentity.tac}\n")
-                        }
-                        is CellInfoCdma -> {
-                            cellInfoStringBuilder.append("Type: CDMA\n")
-                            cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.basestationId}\n")
-                            cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
+                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
                         }
                         is CellInfoWcdma -> {
                             cellInfoStringBuilder.append("Type: WCDMA\n")
                             cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
                             cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
                             cellInfoStringBuilder.append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
+                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
                         }
                     }
                     cellInfoStringBuilder.append("\n")
