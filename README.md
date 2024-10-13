@@ -56,7 +56,7 @@ com.example.visualprog
 
 1. Склонируйте репозиторий:
    ```bash
-   git clone https://github.com/kasperekd/visualprog.git
+   git clone https://github.com/kasperekd/VisualProg.git
    ```
 2. Откройте проект в Android Studio.
 3. Подключите реальное устройство или запустите эмулятор.
