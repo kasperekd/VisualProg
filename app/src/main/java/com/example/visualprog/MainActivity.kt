@@ -1,134 +1,59 @@
 package com.example.visualprog
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.content.pm.PackageManager
 import android.os.Bundle
-import android.telephony.CellInfoCdma
-import android.telephony.CellInfoGsm
-import android.telephony.CellInfoLte
-import android.telephony.CellInfoWcdma
-import android.telephony.TelephonyManager
 import android.widget.TextView
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.google.android.gms.location.*
+import com.example.visualprog.cellinfo.CellInfoModule
+import com.example.visualprog.location.LocationModule
+import com.example.visualprog.permissions.PermissionManager
+import com.example.visualprog.ui.UIManager
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var latitudeTextView: TextView
-    private lateinit var longitudeTextView: TextView
-    private lateinit var cellInfoTextView: TextView
-    private lateinit var telephonyManager: TelephonyManager
-    private lateinit var locationRequest: LocationRequest
-    private lateinit var locationCallback: LocationCallback
+    private lateinit var locationModule: LocationModule
+    private lateinit var permissionManager: PermissionManager
+    private lateinit var cellInfoModule: CellInfoModule
+    private lateinit var uiManager: UIManager
 
-    @SuppressLint("MissingInflatedId")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        latitudeTextView = findViewById(R.id.Latitude)
-        longitudeTextView = findViewById(R.id.Longitude)
-        cellInfoTextView = findViewById(R.id.CellInfo)
+        // Инициализация UI
+        val latitudeTextView: TextView = findViewById(R.id.Latitude)
+        val longitudeTextView: TextView = findViewById(R.id.Longitude)
+        val cellInfoTextView: TextView = findViewById(R.id.CellInfo)
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+        uiManager = UIManager(latitudeTextView, longitudeTextView, cellInfoTextView)
 
-        locationRequest = LocationRequest.create().apply {
-            interval = 1000
-            fastestInterval = 1000
-            priority = LocationRequest.PRIORITY_HIGH_ACCURACY
+        // Инициализация модулей
+        locationModule = LocationModule(this) { latitude, longitude ->
+            uiManager.updateLocation(latitude, longitude)
         }
 
-        locationCallback = object : LocationCallback() {
-            @SuppressLint("SetTextI18n")
-            override fun onLocationResult(locationResult: LocationResult) {
-                for (location in locationResult.locations) {
-                    latitudeTextView.text = "Latitude: ${location.latitude}"
-                    longitudeTextView.text = "Longitude: ${location.longitude}"
-                    getCellInfo() // Получение информации о базовых станциях
-                }
-            }
+        cellInfoModule = CellInfoModule(this) { cellInfo ->
+            uiManager.updateCellInfo(cellInfo)
         }
 
-        requestLocationPermission()
+        permissionManager = PermissionManager(this) {
+            locationModule.startLocationUpdates()
+            cellInfoModule.fetchCellInfo()
+        }
+
+        // Запрос разрешений
+        permissionManager.checkAndRequestPermission(Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
-    private fun requestLocationPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-        } else {
-            startLocationUpdates()
-        }
-    }
-
-    private val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-        if (isGranted) {
-            startLocationUpdates()
-        } else {
-            Toast.makeText(this, "Permission to access location denied", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun startLocationUpdates() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, null)
-        }
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun getCellInfo() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            val cellInfoList = telephonyManager.allCellInfo
-            if (cellInfoList != null) {
-                val cellInfoStringBuilder = StringBuilder()
-                for (cellInfo in cellInfoList) {
-                    when (cellInfo) {
-                        is CellInfoGsm -> {
-                            cellInfoStringBuilder.append("Type: GSM\n")
-                            cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
-                            cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                            cellInfoStringBuilder.append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
-                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
-                        }
-                        is CellInfoLte -> {
-                            cellInfoStringBuilder.append("Type: LTE\n")
-                            cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.ci}\n")
-                            cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                            cellInfoStringBuilder.append("Tracking Area Code: ${cellInfo.cellIdentity.tac}\n")
-                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
-                        }
-                        is CellInfoWcdma -> {
-                            cellInfoStringBuilder.append("Type: WCDMA\n")
-                            cellInfoStringBuilder.append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
-                            cellInfoStringBuilder.append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                            cellInfoStringBuilder.append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
-                            cellInfoStringBuilder.append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n")
-                        }
-                    }
-                    cellInfoStringBuilder.append("\n")
-                }
-                cellInfoTextView.text = "Cell Info:\n$cellInfoStringBuilder"
-            } else {
-                cellInfoTextView.text = "No cell info available"
-            }
-        } else {
-            requestLocationPermission()
+    override fun onResume() {
+        super.onResume()
+        if (permissionManager.isPermissionGranted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            locationModule.startLocationUpdates()
         }
     }
 
     override fun onPause() {
         super.onPause()
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        startLocationUpdates()
+        locationModule.stopLocationUpdates()
     }
 }
