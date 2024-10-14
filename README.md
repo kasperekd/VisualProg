@@ -49,7 +49,7 @@ com.example.visualprog
 
 ### Требования
 - Android Studio 4.0 и выше
-- Android SDK версии 21 и выше
+- Android SDK версии 31 и выше
 - Устройство с поддержкой Google Play Services или эмулятор с их поддержкой
 
 ### Шаги по установке
