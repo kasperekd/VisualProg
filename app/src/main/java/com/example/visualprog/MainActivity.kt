@@ -32,7 +32,7 @@ class MainActivity : AppCompatActivity() {
             uiManager.updateLocation(latitude, longitude)
         }
 
-        cellInfoModule = CellInfoModule(this) { cellInfo ->
+        cellInfoModule = CellInfoModule(this, "192.168.0.3:9000/api/cellinfo") { cellInfo ->
             uiManager.updateCellInfo(cellInfo)
         }
 
