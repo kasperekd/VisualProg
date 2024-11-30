@@ -2,12 +2,21 @@ package com.example.visualprog.cellinfo
 
 import android.annotation.SuppressLint
 import android.content.Context
+import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.telephony.*
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
+//import kotlinx.coroutines.DefaultExecutor.isActive
+import kotlinx.coroutines.NonCancellable.isActive
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
@@ -23,22 +32,22 @@ class CellInfoModule(
 
     private val telephonyManager: TelephonyManager =
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-    private val handler = Handler(Looper.getMainLooper())
-    private val fetchInterval = 1 * 1000L // 1 секунда
+    private var fetchJob: Job? = null
+    private val fetchInterval = 1000L // Интервал 1 секунда
 
+    // Стартуем периодический запрос данных
     fun startFetching() {
-        handler.post(fetchRunnable)
-    }
-
-    fun stopFetching() {
-        handler.removeCallbacks(fetchRunnable)
-    }
-
-    private val fetchRunnable = object : Runnable {
-        override fun run() {
-            fetchCellInfo()
-            handler.postDelayed(this, fetchInterval)
+        fetchJob = CoroutineScope(Dispatchers.Main).launch {
+            while (isActive) {
+                fetchCellInfo()
+                delay(fetchInterval) // Задержка 1 секунда между запросами
+            }
         }
+    }
+
+    // Останавливаем периодический запрос данных
+    fun stopFetching() {
+        fetchJob?.cancel()
     }
 
     @SuppressLint("MissingPermission")
@@ -61,10 +70,7 @@ class CellInfoModule(
                             cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
                             cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
                             cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
-                            cellInfoJson.put(
-                                "operator",
-                                cellInfo.cellIdentity.mobileNetworkOperator
-                            )
+                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
                             cellInfoStringBuilder.append("Type: GSM\n")
                                 .append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
                                 .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
@@ -77,10 +83,7 @@ class CellInfoModule(
                             cellInfoJson.put("cellId", cellInfo.cellIdentity.ci)
                             cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
                             cellInfoJson.put("trackingAreaCode", cellInfo.cellIdentity.tac)
-                            cellInfoJson.put(
-                                "operator",
-                                cellInfo.cellIdentity.mobileNetworkOperator
-                            )
+                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
                             cellInfoStringBuilder.append("Type: LTE\n")
                                 .append("Cell ID: ${cellInfo.cellIdentity.ci}\n")
                                 .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
@@ -93,10 +96,7 @@ class CellInfoModule(
                             cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
                             cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
                             cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
-                            cellInfoJson.put(
-                                "operator",
-                                cellInfo.cellIdentity.mobileNetworkOperator
-                            )
+                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
                             cellInfoStringBuilder.append("Type: WCDMA\n")
                                 .append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
                                 .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
@@ -106,6 +106,7 @@ class CellInfoModule(
                     }
                     cellInfoJsonArray.put(cellInfoJson)
                 }
+
                 val cellInfoString = cellInfoStringBuilder.toString()
                 onCellInfoFetched(cellInfoString) // Обновляем UI
                 sendToServer(cellInfoJsonArray) // Отправляем на сервер
@@ -124,7 +125,51 @@ class CellInfoModule(
             val maxAttempts = 5  // Максимальное количество попыток
             val delayBetweenAttempts = 2000L  // Задержка между попытками в миллисекундах (2 секунды)
 
+            // 1. Пробуем сразу отправить данные на /api/cellinfo
             while (attempt < maxAttempts) {
+                try {
+                    // Попытка отправить данные на эндпоинт /api/cellinfo
+                    val url = URL("$serverUrl/api/cellinfo")
+                    connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "POST"
+                    connection.setRequestProperty(
+                        "Content-Type",
+                        "application/json; charset=utf-8"
+                    )
+                    connection.doOutput = true
+
+                    val outputStream: OutputStream = connection.outputStream
+                    outputStream.use { it.write(data.toString().toByteArray()) }
+
+                    val responseCode = connection.responseCode
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        // Успешная отправка данных
+                        println("Data sent successfully")
+                        return@thread
+                    } else {
+                        // Ошибка при отправке данных
+                        println("Server returned response code: $responseCode")
+                    }
+                } catch (e: Exception) {
+                    // Ошибка при попытке отправки данных
+                    e.printStackTrace()
+                    println("Error during data sending: ${e.message}")
+                }
+
+                // Если отправка данных не удалась, пробуем проверку через /api/health
+                attempt++
+                if (attempt < maxAttempts) {
+                    println("Attempt $attempt failed. Retrying in $delayBetweenAttempts ms...")
+                    Thread.sleep(delayBetweenAttempts)
+                }
+            }
+
+            // Если отправка данных не удалась, начинаем проверку через /api/health
+            var healthCheckAttempt = 0
+            val healthCheckMaxAttempts = 12  // 12 попыток (по одной в 5 секунд) = 1 минута
+            var serverAvailable = false
+
+            while (healthCheckAttempt < healthCheckMaxAttempts && !serverAvailable) {
                 try {
                     // Проверка соединения с сервером на эндпоинт /api/health
                     val healthCheckUrl = URL("$serverUrl/api/health")
@@ -135,64 +180,59 @@ class CellInfoModule(
 
                     val healthResponseCode = healthConnection.responseCode
                     if (healthResponseCode == HttpURLConnection.HTTP_OK) {
-                        // Сервер доступен, продолжаем отправку данных
-                        connection = URL(serverUrl).openConnection() as HttpURLConnection
-                        connection.requestMethod = "POST"
-                        connection.setRequestProperty(
-                            "Content-Type",
-                            "application/json; charset=utf-8"
-                        )
-                        connection.doOutput = true
-
-                        val outputStream: OutputStream = connection.outputStream
-                        outputStream.use { it.write(data.toString().toByteArray()) }
-
-                        val responseCode = connection.responseCode
-                        if (responseCode == HttpURLConnection.HTTP_OK) {
-                            // Успешная отправка данных
-                            return@thread  // Выход из потока
-                        } else {
-                            println("Server returned response code: $responseCode")
-                        }
+                        // Сервер доступен, повторяем отправку данных
+                        println("Server is healthy, retrying data send.")
+                        sendDataAgain(data)  // Попытка повторной отправки данных
+                        serverAvailable = true
                     } else {
                         println("Health check failed. Server returned response code: $healthResponseCode")
                     }
-
-                    // Сервер не доступен или ошибка, пытаемся снова
-                    attempt++
-                    if (attempt < maxAttempts) {
-                        println("Attempt $attempt failed. Retrying in $delayBetweenAttempts ms...")
-                        Thread.sleep(delayBetweenAttempts)  // Задержка между попытками
-                    }
                 } catch (e: Exception) {
-                    // Ошибка при попытке соединения с сервером
-                    e.printStackTrace()
-                    println("Connection error: ${e.message}")
-                    attempt++
-                    if (attempt < maxAttempts) {
-                        println("Attempt $attempt failed. Retrying in $delayBetweenAttempts ms...")
-                        Thread.sleep(delayBetweenAttempts)  // Задержка между попытками
-                    }
-                } finally {
-                    // НЕ вызываем disconnect, чтобы продолжить попытки
-                    // connection?.disconnect()  // Убираем этот вызов
+                    println("Error during health check: ${e.message}")
+                }
+
+                // Задержка между попытками проверки /api/health (5 секунд)
+                healthCheckAttempt++
+                if (healthCheckAttempt < healthCheckMaxAttempts) {
+                    Thread.sleep(5000)  // Задержка между проверками /api/health
                 }
             }
 
-            // Если все попытки не удались, показываем уведомление
-            if (attempt >= maxAttempts) {
-                showServerUnavailableToast()  // Показываем уведомление
+            // Если сервер не доступен после всех попыток
+            if (!serverAvailable) {
+                Toast.makeText(context, "Server is unavailable. Please try again later.", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    // Функция для отображения уведомления Toast
-    private fun showServerUnavailableToast() {
-        handler.post {
-            // Показываем всплывающее уведомление (Toast) в главном потоке
-            Toast.makeText(context, "Server is unavailable. Please try again later.", Toast.LENGTH_LONG).show()
+    // Метод для повторной отправки данных
+    private fun sendDataAgain(data: JSONArray) {
+        thread {
+            var connection: HttpURLConnection? = null
+            try {
+                // Повторная попытка отправки данных на /api/cellinfo
+                val url = URL("$serverUrl/api/cellinfo")
+                connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=utf-8"
+                )
+                connection.doOutput = true
+
+                val outputStream: OutputStream = connection.outputStream
+                outputStream.use { it.write(data.toString().toByteArray()) }
+
+                val responseCode = connection.responseCode
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    println("Data sent successfully after server recovery.")
+                } else {
+                    println("Server returned response code: $responseCode")
+                }
+            } catch (e: Exception) {
+                println("Error during data sending after server recovery: ${e.message}")
+            }
         }
     }
-
 
 }

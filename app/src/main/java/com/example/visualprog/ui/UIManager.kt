@@ -6,6 +6,7 @@ class UIManager(
     private val latitudeTextView: TextView,
     private val longitudeTextView: TextView,
     private val cellInfoTextView: TextView
+
 ) {
     fun updateLocation(latitude: Double, longitude: Double) {
         latitudeTextView.text = "Latitude: $latitude"
