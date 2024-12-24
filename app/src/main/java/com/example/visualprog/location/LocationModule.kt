@@ -11,8 +11,8 @@ class LocationModule(
 
     private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
     private val locationRequest: LocationRequest = LocationRequest.create().apply {
-        interval = 1000
-        fastestInterval = 1000
+        interval = 250
+        fastestInterval = 250
         priority = LocationRequest.PRIORITY_HIGH_ACCURACY
     }
     private val locationCallback = object : LocationCallback() {
@@ -30,5 +30,19 @@ class LocationModule(
 
     fun stopLocationUpdates() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun getCurrentLocation(onLocationReceived: (Double, Double) -> Unit) {
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+            if (location != null) {
+                onLocationReceived(location.latitude, location.longitude)
+            } else {
+                onLocationReceived(0.0, 0.0)
+            }
+        }.addOnFailureListener { exception ->
+            exception.printStackTrace()
+            onLocationReceived(0.0, 0.0)
+        }
     }
 }

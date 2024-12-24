@@ -89,16 +89,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun startProcesses() {
         job?.cancel()
+        locationModule.startLocationUpdates()
         cellInfoModule.startFetching()
         job = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
-                try {
-                    locationModule.startLocationUpdates()
-
-                    delay(500)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+//                try {
+//                    locationModule.startLocationUpdates()
+//
+//                    delay(100)
+//                } catch (e: Exception) {
+//                    e.printStackTrace()
+//                }
             }
             cellInfoModule.stopFetching()
         }

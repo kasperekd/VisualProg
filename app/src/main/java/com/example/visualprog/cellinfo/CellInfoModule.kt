@@ -29,43 +29,56 @@ class CellInfoModule(
     private val telephonyManager: TelephonyManager =
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private var fetchJob: Job? = null
-    private val fetchInterval = 500L // Интервал 1 секунда
+    private val fetchInterval = 500L
 
-    private val buffer: Queue<JSONObject> = LinkedList() // Буфер для хранения данных
-    private val bufferSize = 20 // Размер буфера
-    private var isSending = false // Флаг состояния отправки
+    private val buffer: Queue<JSONObject> = LinkedList()
+    private val bufferSize = 10 // Размер буфера
+    private var isSending = false
 
-    // Стартуем периодический запрос данных
     fun startFetching() {
         Log.d("CellInfoModule", "startFetching")
         val locationModule = LocationModule(context) { latitude, longitude ->
-            fetchCellInfo(latitude, longitude)
+            fetchCellInfo(latitude, longitude) { cellInfoJson ->
+                uiManager.updateCellInfo(cellInfoJson.toString())
+                uiManager.updateLocation(latitude, longitude)
+            }
         }
 
-        Log.d("CellInfoModule", "startFetching2")
         locationModule.startLocationUpdates()
 
-        fetchJob = CoroutineScope(Dispatchers.Main).launch {
+        fetchJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
-                delay(fetchInterval) // Задержка 1 секунда между запросами
+                locationModule.getCurrentLocation { latitude, longitude ->
+                    fetchCellInfo(latitude, longitude) { cellInfoJson ->
+                        uiManager.updateCellInfo(cellInfoJson.toString())
+                        uiManager.updateLocation(latitude, longitude)
+
+                        synchronized(buffer) {
+                            buffer.add(cellInfoJson)
+                            if (buffer.size >= bufferSize && !isSending) {
+                                sendBufferedData()
+                            }
+                        }
+                    }
+                }
+                delay(fetchInterval)
             }
         }
     }
 
-    // Останавливаем периодический запрос данных
     fun stopFetching() {
         fetchJob?.cancel()
     }
 
     @SuppressLint("MissingPermission")
-    fun fetchCellInfo(latitude: Double, longitude: Double) {
+    fun fetchCellInfo(latitude: Double, longitude: Double, onCellInfoReady: (JSONObject) -> Unit) {
         if (ActivityCompat.checkSelfPermission(
                 context,
                 android.Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
         ) {
             val cellInfoList = telephonyManager.allCellInfo
-            Log.d("CellInfoModule", "fetchCellInfo")
+//            Log.d("CellInfoModule", "fetchCellInfo")
             if (cellInfoList != null) {
                 for (cellInfo in cellInfoList) {
                     val cellInfoJson = JSONObject()
@@ -74,17 +87,11 @@ class CellInfoModule(
                         is CellInfoLte -> populateCellInfoJson(cellInfoJson, cellInfo, "LTE", latitude, longitude)
                         is CellInfoWcdma -> populateCellInfoJson(cellInfoJson, cellInfo, "WCDMA", latitude, longitude)
                     }
-                    // Фильтрация некорректных записей
+
                     if (cellInfoJson.optInt("cellId") != 268435455 && cellInfoJson.optString("operator") != "Unknown") {
-                        synchronized(buffer) {
-                            buffer.add(cellInfoJson)
-                            if (buffer.size >= bufferSize && !isSending) {
-                                sendBufferedData()
-                            }
-                        }
+                        onCellInfoReady(cellInfoJson)
                     } else {
-                        // Логирование пропущенных записей
-                        Log.d("CellInfoModule", "Skipped invalid cell info: $cellInfoJson")
+//                        Log.d("CellInfoModule", "Skipped invalid cell info: $cellInfoJson")
                     }
                 }
             }
@@ -124,14 +131,6 @@ class CellInfoModule(
                 cellInfoJson.put("SINR", null)
             }
         }
-
-        // Проверяем
-        if (cellInfoJson.optInt("cellId") == 268435455 ||
-            cellInfoJson.optString("operator") == "Unknown"
-//            cellInfoJson.optInt("signalStrength") == -128
-        ) {
-            println("Detected incomplete or invalid cell data: $cellInfoJson")
-        }
         uiManager.updateCellInfo(cellInfoJson.toString())
         uiManager.updateLocation(latitude, longitude)
     }
@@ -146,7 +145,7 @@ class CellInfoModule(
             }
         }
 
-        thread {
+        CoroutineScope(Dispatchers.IO).launch {
             var connection: HttpURLConnection? = null
             try {
                 val url = URL("$serverUrl/api/cellinfo")
@@ -160,22 +159,21 @@ class CellInfoModule(
 
                 val responseCode = connection.responseCode
                 if (responseCode == HttpURLConnection.HTTP_OK) {
-                    println("Data sent successfully")
+                    Log.d("CellInfoModule", "Data sent successfully")
                 } else {
-                    println("Server returned response code: $responseCode")
+                    Log.e("CellInfoModule", "Server returned response code: $responseCode")
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                println("Error during data sending: ${e.message}")
+                Log.e("CellInfoModule", "Error during data sending: ${e.message}", e)
             } finally {
                 isSending = false
-            }
-
-            synchronized(buffer) {
-                if (buffer.size >= bufferSize && !isSending) {
-                    sendBufferedData()
+                synchronized(buffer) {
+                    if (buffer.size >= bufferSize && !isSending) {
+                        sendBufferedData()
+                    }
                 }
             }
         }
     }
 }
+
