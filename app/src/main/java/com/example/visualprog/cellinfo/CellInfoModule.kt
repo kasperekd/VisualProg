@@ -1,28 +1,22 @@
-package com.example.visualprog.cellinfo
+package com.example.visualprog.cellinfo;
 
-import android.annotation.SuppressLint
-import android.content.Context
-import kotlinx.coroutines.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import android.content.pm.PackageManager
-import android.os.Handler
-import android.os.Looper
-import android.telephony.*
-import android.widget.Toast
-import androidx.core.app.ActivityCompat
-//import kotlinx.coroutines.DefaultExecutor.isActive
-import kotlinx.coroutines.NonCancellable.isActive
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlin.concurrent.thread
+import android.annotation.SuppressLint;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.telephony.*;
+import android.util.Log
+import android.widget.Toast;
+import androidx.core.app.ActivityCompat;
+import com.example.visualprog.location.LocationModule;
+import kotlinx.coroutines.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.LinkedList;
+import java.util.Queue;
+import kotlin.concurrent.thread;
 
 class CellInfoModule(
     private val context: Context,
@@ -33,13 +27,23 @@ class CellInfoModule(
     private val telephonyManager: TelephonyManager =
         context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
     private var fetchJob: Job? = null
-    private val fetchInterval = 1000L // Интервал 1 секунда
+    private val fetchInterval = 500L // Интервал 1 секунда
+
+    private val buffer: Queue<JSONObject> = LinkedList() // Буфер для хранения данных
+    private val bufferSize = 20 // Размер буфера
+    private var isSending = false // Флаг состояния отправки
 
     // Стартуем периодический запрос данных
     fun startFetching() {
+        Log.d("CellInfoModule", "startFetching")
+        val locationModule = LocationModule(context) { latitude, longitude ->
+            fetchCellInfo(latitude, longitude)
+        }
+        Log.d("CellInfoModule", "startFetching2")
+        locationModule.startLocationUpdates()
+
         fetchJob = CoroutineScope(Dispatchers.Main).launch {
             while (isActive) {
-                fetchCellInfo()
                 delay(fetchInterval) // Задержка 1 секунда между запросами
             }
         }
@@ -51,188 +55,122 @@ class CellInfoModule(
     }
 
     @SuppressLint("MissingPermission")
-    fun fetchCellInfo() {
+    fun fetchCellInfo(latitude: Double, longitude: Double) {
         if (ActivityCompat.checkSelfPermission(
                 context,
                 android.Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
         ) {
             val cellInfoList = telephonyManager.allCellInfo
-            val cellInfoJsonArray = JSONArray()
-            val cellInfoStringBuilder = StringBuilder()
-
+            Log.d("CellInfoModule", "fetchCellInfo")
             if (cellInfoList != null) {
                 for (cellInfo in cellInfoList) {
                     val cellInfoJson = JSONObject()
                     when (cellInfo) {
-                        is CellInfoGsm -> {
-                            cellInfoJson.put("type", "GSM")
-                            cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
-                            cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
-                            cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
-                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
-                            cellInfoStringBuilder.append("Type: GSM\n")
-                                .append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
-                                .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                                .append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
-                                .append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n\n")
-                        }
-
-                        is CellInfoLte -> {
-                            cellInfoJson.put("type", "LTE")
-                            cellInfoJson.put("cellId", cellInfo.cellIdentity.ci)
-                            cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
-                            cellInfoJson.put("trackingAreaCode", cellInfo.cellIdentity.tac)
-                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
-                            cellInfoStringBuilder.append("Type: LTE\n")
-                                .append("Cell ID: ${cellInfo.cellIdentity.ci}\n")
-                                .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                                .append("Tracking Area Code: ${cellInfo.cellIdentity.tac}\n")
-                                .append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n\n")
-                        }
-
-                        is CellInfoWcdma -> {
-                            cellInfoJson.put("type", "WCDMA")
-                            cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
-                            cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
-                            cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
-                            cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator)
-                            cellInfoStringBuilder.append("Type: WCDMA\n")
-                                .append("Cell ID: ${cellInfo.cellIdentity.cid}\n")
-                                .append("Signal Strength: ${cellInfo.cellSignalStrength.dbm} dBm\n")
-                                .append("Location Area Code: ${cellInfo.cellIdentity.lac}\n")
-                                .append("Operator: ${cellInfo.cellIdentity.mobileNetworkOperator}\n\n")
-                        }
+                        is CellInfoGsm -> populateCellInfoJson(cellInfoJson, cellInfo, "GSM", latitude, longitude)
+                        is CellInfoLte -> populateCellInfoJson(cellInfoJson, cellInfo, "LTE", latitude, longitude)
+                        is CellInfoWcdma -> populateCellInfoJson(cellInfoJson, cellInfo, "WCDMA", latitude, longitude)
                     }
-                    cellInfoJsonArray.put(cellInfoJson)
+                    // Фильтрация некорректных записей
+                    if (cellInfoJson.optInt("cellId") != 268435455 && cellInfoJson.optString("operator") != "Unknown") {
+                        synchronized(buffer) {
+                            buffer.add(cellInfoJson)
+                            if (buffer.size >= bufferSize && !isSending) {
+                                sendBufferedData()
+                            }
+                        }
+                    } else {
+                        // Логирование пропущенных записей
+                        Log.d("CellInfoModule", "Skipped invalid cell info: $cellInfoJson")
+                    }
                 }
-
-                val cellInfoString = cellInfoStringBuilder.toString()
-                onCellInfoFetched(cellInfoString) // Обновляем UI
-                sendToServer(cellInfoJsonArray) // Отправляем на сервер
-            } else {
-                val errorJson = JSONArray().put(JSONObject().put("error", "No cell info available"))
-                onCellInfoFetched("No cell info available") // Обновляем UI
-                sendToServer(errorJson) // Отправляем ошибку на сервер
             }
         }
     }
 
-    private fun sendToServer(data: JSONArray) {
-        thread {
-            var connection: HttpURLConnection? = null
-            var attempt = 0
-            val maxAttempts = 5  // Максимальное количество попыток
-            val delayBetweenAttempts = 2000L  // Задержка между попытками в миллисекундах (2 секунды)
+    private fun populateCellInfoJson(cellInfoJson: JSONObject, cellInfo: CellInfo, type: String, latitude: Double, longitude: Double) {
+        cellInfoJson.put("type", type)
+        cellInfoJson.put("coordinates", "$latitude, $longitude")
+        cellInfoJson.put("timestamp", System.currentTimeMillis()) // Временная метка
 
-            // 1. Пробуем сразу отправить данные на /api/cellinfo
-            while (attempt < maxAttempts) {
-                try {
-                    // Попытка отправить данные на эндпоинт /api/cellinfo
-                    val url = URL("$serverUrl/api/cellinfo")
-                    connection = url.openConnection() as HttpURLConnection
-                    connection.requestMethod = "POST"
-                    connection.setRequestProperty(
-                        "Content-Type",
-                        "application/json; charset=utf-8"
-                    )
-                    connection.doOutput = true
-
-                    val outputStream: OutputStream = connection.outputStream
-                    outputStream.use { it.write(data.toString().toByteArray()) }
-
-                    val responseCode = connection.responseCode
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        // Успешная отправка данных
-                        println("Data sent successfully")
-                        return@thread
-                    } else {
-                        // Ошибка при отправке данных
-                        println("Server returned response code: $responseCode")
-                    }
-                } catch (e: Exception) {
-                    // Ошибка при попытке отправки данных
-                    e.printStackTrace()
-                    println("Error during data sending: ${e.message}")
-                }
-
-                // Если отправка данных не удалась, пробуем проверку через /api/health
-                attempt++
-                if (attempt < maxAttempts) {
-                    println("Attempt $attempt failed. Retrying in $delayBetweenAttempts ms...")
-                    Thread.sleep(delayBetweenAttempts)
-                }
+        when (cellInfo) {
+            is CellInfoGsm -> {
+                cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
+                cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
+                cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
+                cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator ?: "Unknown")
+                cellInfoJson.put("RSRP", null)
+                cellInfoJson.put("RSRQ", null)
+                cellInfoJson.put("SINR", null)
             }
-
-            // Если отправка данных не удалась, начинаем проверку через /api/health
-            var healthCheckAttempt = 0
-            val healthCheckMaxAttempts = 12  // 12 попыток (по одной в 5 секунд) = 1 минута
-            var serverAvailable = false
-
-            while (healthCheckAttempt < healthCheckMaxAttempts && !serverAvailable) {
-                try {
-                    // Проверка соединения с сервером на эндпоинт /api/health
-                    val healthCheckUrl = URL("$serverUrl/api/health")
-                    val healthConnection = healthCheckUrl.openConnection() as HttpURLConnection
-                    healthConnection.requestMethod = "GET"
-                    healthConnection.connectTimeout = 5000 // 5 секунд на подключение
-                    healthConnection.readTimeout = 5000 // 5 секунд на получение данных
-
-                    val healthResponseCode = healthConnection.responseCode
-                    if (healthResponseCode == HttpURLConnection.HTTP_OK) {
-                        // Сервер доступен, повторяем отправку данных
-                        println("Server is healthy, retrying data send.")
-                        sendDataAgain(data)  // Попытка повторной отправки данных
-                        serverAvailable = true
-                    } else {
-                        println("Health check failed. Server returned response code: $healthResponseCode")
-                    }
-                } catch (e: Exception) {
-                    println("Error during health check: ${e.message}")
-                }
-
-                // Задержка между попытками проверки /api/health (5 секунд)
-                healthCheckAttempt++
-                if (healthCheckAttempt < healthCheckMaxAttempts) {
-                    Thread.sleep(5000)  // Задержка между проверками /api/health
-                }
+            is CellInfoLte -> {
+                cellInfoJson.put("cellId", cellInfo.cellIdentity.ci)
+                cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
+                cellInfoJson.put("trackingAreaCode", cellInfo.cellIdentity.tac)
+                cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator ?: "Unknown")
+                cellInfoJson.put("RSRP", cellInfo.cellSignalStrength.rsrp)
+                cellInfoJson.put("RSRQ", cellInfo.cellSignalStrength.rsrq)
             }
-
-            // Если сервер не доступен после всех попыток
-            if (!serverAvailable) {
-                Toast.makeText(context, "Server is unavailable. Please try again later.", Toast.LENGTH_LONG).show()
+            is CellInfoWcdma -> {
+                cellInfoJson.put("cellId", cellInfo.cellIdentity.cid)
+                cellInfoJson.put("signalStrength", cellInfo.cellSignalStrength.dbm)
+                cellInfoJson.put("locationAreaCode", cellInfo.cellIdentity.lac)
+                cellInfoJson.put("operator", cellInfo.cellIdentity.mobileNetworkOperator ?: "Unknown")
+                cellInfoJson.put("RSRP", null)
+                cellInfoJson.put("RSRQ", null)
+                cellInfoJson.put("SINR", null)
             }
+        }
+
+        // Проверяем и логируем подозрительные данные
+        if (cellInfoJson.optInt("cellId") == 268435455 ||
+            cellInfoJson.optString("operator") == "Unknown"
+//            cellInfoJson.optInt("signalStrength") == -128
+        ) {
+            println("Detected incomplete or invalid cell data: $cellInfoJson")
         }
     }
 
-    // Метод для повторной отправки данных
-    private fun sendDataAgain(data: JSONArray) {
+    private fun sendBufferedData() {
+        isSending = true
+        val dataToSend: JSONArray
+        synchronized(buffer) {
+            dataToSend = JSONArray()
+            while (buffer.isNotEmpty() && dataToSend.length() < bufferSize) {
+                dataToSend.put(buffer.poll())
+            }
+        }
+
         thread {
             var connection: HttpURLConnection? = null
             try {
-                // Повторная попытка отправки данных на /api/cellinfo
                 val url = URL("$serverUrl/api/cellinfo")
                 connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
-                connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json; charset=utf-8"
-                )
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 connection.doOutput = true
 
                 val outputStream: OutputStream = connection.outputStream
-                outputStream.use { it.write(data.toString().toByteArray()) }
+                outputStream.use { it.write(dataToSend.toString().toByteArray()) }
 
                 val responseCode = connection.responseCode
                 if (responseCode == HttpURLConnection.HTTP_OK) {
-                    println("Data sent successfully after server recovery.")
+                    println("Data sent successfully")
                 } else {
                     println("Server returned response code: $responseCode")
                 }
             } catch (e: Exception) {
-                println("Error during data sending after server recovery: ${e.message}")
+                e.printStackTrace()
+                println("Error during data sending: ${e.message}")
+            } finally {
+                isSending = false
+            }
+
+            synchronized(buffer) {
+                if (buffer.size >= bufferSize && !isSending) {
+                    sendBufferedData()
+                }
             }
         }
     }
-
 }

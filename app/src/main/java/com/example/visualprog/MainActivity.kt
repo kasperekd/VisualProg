@@ -31,14 +31,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var permissionManager: PermissionManager
     private lateinit var uiManager: UIManager
 
-    private var currentServerUrl: String? = null  // Для хранения текущего IP-адреса
-    private var job: Job? = null  // Для управления фоновым процессом
+    private var currentServerUrl: String? = null
+    private var job: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Инициализация UI
         val latitudeTextView: TextView = findViewById(R.id.Latitude)
         val longitudeTextView: TextView = findViewById(R.id.Longitude)
         val cellInfoTextView: TextView = findViewById(R.id.CellInfo)
@@ -47,39 +46,34 @@ class MainActivity : AppCompatActivity() {
 
         uiManager = UIManager(latitudeTextView, longitudeTextView, cellInfoTextView)
 
-        // Инициализация модулей
         locationModule = LocationModule(this) { latitude, longitude ->
             uiManager.updateLocation(latitude, longitude)
         }
 
         permissionManager = PermissionManager(this) {
-            locationModule.startLocationUpdates()
-            cellInfoModule.fetchCellInfo()
+//            locationModule.startLocationUpdates()
+//            cellInfoModule.fetchCellInfo()
+//            cellInfoModule.startFetching()
+
         }
 
-        // Обработчик кнопки проверки IP
         checkButton.setOnClickListener {
             val ipAddress = ipEditText.text.toString().trim()
 
             if (isValidIPAddressWithPort(ipAddress)) {
-                // Проверка доступности сервера только если IP изменился
                 if (ipAddress != currentServerUrl) {
                     checkServerHealth(ipAddress) { isHealthy ->
                         if (isHealthy) {
-                            currentServerUrl = ipAddress  // Сохраняем новый адрес
+                            currentServerUrl = ipAddress
 
-                            // Инициализируем CellInfoModule с новым сервером
                             cellInfoModule = CellInfoModule(this, "http://$ipAddress") { cellInfo ->
                                 uiManager.updateCellInfo(cellInfo)
                             }
 
-                            // Запрашиваем разрешения и начинаем работу
                             permissionManager.checkAndRequestPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                             Toast.makeText(this, "Сервер доступен, IP принят", Toast.LENGTH_SHORT).show()
 
-                            // Запускаем фоновый процесс
-                            startBackgroundProcesses()
-//                            cellInfoModule.startFetching()
+                            startProcesses()
                         } else {
                             Toast.makeText(this, "Сервер недоступен. Проверьте адрес.", Toast.LENGTH_SHORT).show()
                         }
@@ -93,18 +87,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startBackgroundProcesses() {
-        // Если уже есть активная корутина, отменяем ее
+    private fun startProcesses() {
         job?.cancel()
         cellInfoModule.startFetching()
-        // Запускаем новую корутину для бесконечной работы
         job = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {  // Это условие гарантирует, что процесс будет выполняться до тех пор, пока работа не будет отменена
+            while (isActive) {
                 try {
-                    // Обновление местоположения
                     locationModule.startLocationUpdates()
 
-                    delay(1000)  // 1.0 секунд
+                    delay(500)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -114,19 +105,16 @@ class MainActivity : AppCompatActivity() {
     }
     override fun onPause() {
         super.onPause()
-        // Останавливаем фоновый процесс, когда активность уходит в фон
         job?.cancel()
     }
 
     override fun onResume() {
         super.onResume()
-        // Запускаем процесс снова, когда активность возвращается на экран
         if (currentServerUrl != null) {
-            startBackgroundProcesses()
+            startProcesses()
         }
     }
 
-    // Проверка корректности IP-адреса с портом
     private fun isValidIPAddressWithPort(address: String): Boolean {
         val regex = Regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}:[0-9]{1,5}$")
         if (!regex.matches(address)) return false
@@ -134,15 +122,12 @@ class MainActivity : AppCompatActivity() {
         val ip = address.substringBefore(":")
         val port = address.substringAfter(":").toIntOrNull()
 
-        // Проверка, что IP-адрес корректен и порт в допустимых пределах
         return Patterns.IP_ADDRESS.matcher(ip).matches() && port != null && port in 1..65535
     }
 
-    // Проверка доступности сервера
     private fun checkServerHealth(address: String, callback: (Boolean) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Проверяем пинг до google.com
                 val isPingSuccessful = isPingSuccessful("google.com")
                 if (!isPingSuccessful) {
                     withContext(Dispatchers.Main) {
@@ -156,7 +141,6 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                // Проверяем доступность сервера
                 val url = URL("http://$address/api/health")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 5000
@@ -189,7 +173,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Проверка пинга до указанного хоста
     private fun isPingSuccessful(host: String): Boolean {
         return try {
             val process = Runtime.getRuntime().exec("ping -c 1 $host")

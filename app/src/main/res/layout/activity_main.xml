@@ -59,7 +59,7 @@
         android:layout_marginBottom="28dp"
         android:ems="10"
         android:inputType="text"
-        android:text="192.168.0.3:9000"
+        android:text="82.146.47.165:9000"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.498"
