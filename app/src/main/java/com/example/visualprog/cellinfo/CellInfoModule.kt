@@ -8,6 +8,7 @@ import android.util.Log
 import android.widget.Toast;
 import androidx.core.app.ActivityCompat;
 import com.example.visualprog.location.LocationModule;
+import com.example.visualprog.ui.UIManager
 import kotlinx.coroutines.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -21,6 +22,7 @@ import kotlin.concurrent.thread;
 class CellInfoModule(
     private val context: Context,
     private val serverUrl: String,
+    private val uiManager: UIManager,
     private val onCellInfoFetched: (String) -> Unit
 ) {
 
@@ -39,6 +41,7 @@ class CellInfoModule(
         val locationModule = LocationModule(context) { latitude, longitude ->
             fetchCellInfo(latitude, longitude)
         }
+
         Log.d("CellInfoModule", "startFetching2")
         locationModule.startLocationUpdates()
 
@@ -122,13 +125,15 @@ class CellInfoModule(
             }
         }
 
-        // Проверяем и логируем подозрительные данные
+        // Проверяем
         if (cellInfoJson.optInt("cellId") == 268435455 ||
             cellInfoJson.optString("operator") == "Unknown"
 //            cellInfoJson.optInt("signalStrength") == -128
         ) {
             println("Detected incomplete or invalid cell data: $cellInfoJson")
         }
+        uiManager.updateCellInfo(cellInfoJson.toString())
+        uiManager.updateLocation(latitude, longitude)
     }
 
     private fun sendBufferedData() {

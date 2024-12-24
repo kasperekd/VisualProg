@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
                         if (isHealthy) {
                             currentServerUrl = ipAddress
 
-                            cellInfoModule = CellInfoModule(this, "http://$ipAddress") { cellInfo ->
+                            cellInfoModule = CellInfoModule(this, "http://$ipAddress", uiManager) { cellInfo ->
                                 uiManager.updateCellInfo(cellInfo)
                             }
 
